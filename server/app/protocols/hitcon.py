@@ -1,5 +1,6 @@
 import requests
 import logging
+import json
 
 from models import FlagStatus, SubmitResult
 
@@ -8,16 +9,15 @@ logger = logging.getLogger(__name__)
 RESPONSES = {
     FlagStatus.QUEUED: ['timeout', 'game not started', 'try again later', 'game over', 'is not up',
                         'no such flag'],
-    FlagStatus.ACCEPTED: ['accepted', 'congrat'],
-    FlagStatus.REJECTED: ['bad', 'wrong', 'expired', 'unknown', 'your own',
-                          'too old', 'not in database', 'already submitted', 'invalid flag'],
+    FlagStatus.ACCEPTED: ['accept'],
+    FlagStatus.REJECTED: ['wrong', 'duplicated'],
 }
 
 TIMEOUT = 5
 
 
 def submit_flags(flags, config):
-    r = requests.put(
+    r = requests.post(
         config['SYSTEM_URL'],
         params={
             'flags': [item.flag for item in flags],
@@ -28,20 +28,19 @@ def submit_flags(flags, config):
 
     logger.info('Checksystem response: %s', r.text)
 
-    unknown_responses = set()
-    for item in r.json():
-        response = item['msg'].strip()
-        response = response.replace('[{}] '.format(item['flag']), '')
+    response_json = json.loads(r.json())
 
-        response_lower = response.lower()
+    unknown_responses = set()
+    for flag, item in zip(flags, response_json):
+        response_lower = item.lower()
         for status, substrings in RESPONSES.items():
             if any(s in response_lower for s in substrings):
                 found_status = status
                 break
         else:
             found_status = FlagStatus.QUEUED
-            if response not in unknown_responses:
-                unknown_responses.add(response)
-                logger.warning('Unknown checksystem response (flag will be resent): %s', response)
+            if response_lower not in unknown_responses:
+                unknown_responses.add(response_lower)
+                logger.warning('Unknown checksystem response (flag will be resent): %s', response_lower)
 
-        yield SubmitResult(item['flag'], found_status, response)
+        yield SubmitResult(flag.flag, found_status, item)
