@@ -9,6 +9,24 @@ services:
       REDIS_URL: 'redis://redis:6379/1'
       POSTGRES_DSN: 'host=postgres port=5432 user=farm password=farm dbname=farm'
       SERVER_PASSWORD: ${SERVER_PASSWORD}
+      SYSTEM_URL: ${SYSTEM_URL}
+      TEAM_FORMAT: ${TEAM_FORMAT}
+      FLAG_FORMAT: ${FLAG_FORMAT}
+      SYSTEM_PROTOCOL: ${SYSTEM_PROTOCOL}
+      SYSTEM_TOKEN: ${SYSTEM_TOKEN}
+      TEAM_TOKEN: ${TEAM_TOKEN}
+      SYSTEM_ID_FLAGS_IP: ${SYSTEM_ID_FLAGS_IP}
+      SYSTEM_ID_FLAGS_PORT: ${SYSTEM_ID_FLAGS_PORT}
+      SUBMIT_FLAG_LIMIT: ${SUBMIT_FLAG_LIMIT}
+      SUBMIT_PERIOD: ${SUBMIT_PERIOD}
+      FLAG_LIFETIME: ${FLAG_LIFETIME}
+      TICK_DURATION: ${TICK_DURATION}
+      START_TIME: ${START_TIME}
+      END_TIME: ${END_TIME}
+      ENABLE_API_AUTH: ${ENABLE_API_AUTH}
+      API_TOKEN: ${API_TOKEN}
+      LIBPATH: ${LIBPATH}
+      DEBUG: ${DEBUG}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -23,6 +41,25 @@ services:
     environment:
       CELERY_BROKER_URL: 'redis://redis:6379/1'
       POSTGRES_DSN: 'host=postgres port=5432 user=farm password=farm dbname=farm'
+      SERVER_PASSWORD: ${SERVER_PASSWORD}
+      SYSTEM_URL: ${SYSTEM_URL}
+      TEAM_FORMAT: ${TEAM_FORMAT}
+      FLAG_FORMAT: ${FLAG_FORMAT}
+      SYSTEM_PROTOCOL: ${SYSTEM_PROTOCOL}
+      SYSTEM_TOKEN: ${SYSTEM_TOKEN}
+      TEAM_TOKEN: ${TEAM_TOKEN}
+      SYSTEM_ID_FLAGS_IP: ${SYSTEM_ID_FLAGS_IP}
+      SYSTEM_ID_FLAGS_PORT: ${SYSTEM_ID_FLAGS_PORT}
+      SUBMIT_FLAG_LIMIT: ${SUBMIT_FLAG_LIMIT}
+      SUBMIT_PERIOD: ${SUBMIT_PERIOD}
+      FLAG_LIFETIME: ${FLAG_LIFETIME}
+      TICK_DURATION: ${TICK_DURATION}
+      START_TIME: ${START_TIME}
+      END_TIME: ${END_TIME}
+      ENABLE_API_AUTH: ${ENABLE_API_AUTH}
+      API_TOKEN: ${API_TOKEN}
+      LIBPATH: ${LIBPATH}
+      DEBUG: ${DEBUG}
     restart: unless-stopped
     depends_on:
       postgres:
