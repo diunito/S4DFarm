@@ -1,6 +1,8 @@
 import App from "@/App.vue";
 import BaseLayout from "@/layouts/BaseLayout.vue";
 import quasarUserOptions from "@/quasar-user-options";
+import '@quasar/extras/material-icons/material-icons.css'
+import 'quasar/src/css/index.sass'
 import router from "@/router";
 import store from "@/store";
 import { Quasar } from "quasar";
