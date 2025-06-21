@@ -6,7 +6,7 @@ services:
     volumes:
       - ./server/app:/app
     environment:
-      REDIS_URL: 'redis://redis:6379/0'
+      REDIS_URL: 'redis://redis:6379/1'
       POSTGRES_DSN: 'host=postgres port=5432 user=farm password=farm dbname=farm'
       SERVER_PASSWORD: ${SERVER_PASSWORD}
     restart: unless-stopped

@@ -35,13 +35,13 @@ def create_app():
 
 
 def create_celery():
-    broker = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
+    broker = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/1')
     celery = Celery(
         'ad_farm',
         broker=broker,
         include=['tasks'],
     )
-    period = get_config()['SUBMIT_PERIOD']
+    period = os.environ.get('SUBMIT_PERIOD')
     celery.conf.beat_schedule = {
         f'submit_flags': {
             'task': 'tasks.submit_flags_task',
