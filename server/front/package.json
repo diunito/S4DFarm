@@ -2,6 +2,7 @@
   "name": "front-new",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "pnpm@10.12.1",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -27,7 +28,7 @@
     "eslint": "^8.46.0",
     "eslint-plugin-vue": "^9.16.1",
     "prettier": "^3.0.0",
-    "sass": "1.32.12",
+    "sass": "^1.89.2",
     "vite": "^4.4.9"
   }
 }
