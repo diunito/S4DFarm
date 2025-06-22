@@ -7,9 +7,11 @@ from flask_cors import CORS
 from prometheus_client import make_wsgi_app
 from prometheus_flask_exporter import PrometheusMetrics
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
+from datetime import timedelta
 
 from api import api
 from reloader import get_config
+
 
 
 def create_app():
@@ -41,7 +43,9 @@ def create_celery():
         broker=broker,
         include=['tasks'],
     )
-    period = os.environ.get('SUBMIT_PERIOD')
+    period_seconds = int(os.environ.get('SUBMIT_PERIOD',5))
+    period = timedelta(seconds=period_seconds)
+
     celery.conf.beat_schedule = {
         f'submit_flags': {
             'task': 'tasks.submit_flags_task',
