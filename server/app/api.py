@@ -169,3 +169,266 @@ def get_teams():
         teams.items(),
     ))
     return jsonify(response)
+
+
+@api.route('/team_stats', methods=['GET'])
+@auth.auth_required
+def get_team_stats():
+    """
+    Endpoint per ottenere le statistiche delle flag per team e servizio
+    Restituisce l'andamento delle flag accettate per ogni team divise per servizio (sploit)
+    """
+    config = reloader.get_config()
+    tick_duration = config.get('ROUND_TIME', 60)  # durata in secondi di un tick
+    start_time = config.get('START_TIME', round(time.time()))
+    
+    # Ottieni il tick corrente o da parametro
+    current_tick = request.args.get('tick', type=int)
+    if current_tick is None:
+        current_time = round(time.time())
+        # Calcola il tick corrente basato sul tempo di inizio della CTF
+        current_tick = max(1, (current_time - start_time) // tick_duration + 1)
+    
+    # Calcola i tempi di inizio e fine del tick
+    tick_start_time = start_time + (current_tick - 1) * tick_duration
+    tick_end_time = start_time + current_tick * tick_duration
+    
+    with db_cursor(True) as (_, curs):
+        # Query per ottenere le statistiche delle flag accettate per team e servizio per il tick specificato
+        curs.execute("""
+            SELECT 
+                team,
+                sploit,
+                COUNT(*) as accepted_flags,
+                MIN(time) as first_flag_time,
+                MAX(time) as last_flag_time
+            FROM flags 
+            WHERE status = %s 
+                AND time >= %s 
+                AND time < %s
+            GROUP BY team, sploit
+            ORDER BY team, sploit
+        """, (
+            FlagStatus.ACCEPTED.name,
+            tick_start_time,
+            tick_end_time
+        ))
+        
+        flag_stats = curs.fetchall()
+        
+        # Query per ottenere tutti i team e servizi distinti
+        curs.execute("SELECT DISTINCT sploit FROM flags ORDER BY sploit")
+        all_services = [row['sploit'] for row in curs.fetchall()]
+        
+        curs.execute("SELECT DISTINCT team FROM flags ORDER BY team")
+        all_teams = [row['team'] for row in curs.fetchall()]
+    
+    # Organizza i dati in una struttura più facilmente utilizzabile dal frontend
+    stats_matrix = {}
+    team_totals = defaultdict(int)
+    
+    # Inizializza la matrice con zeri
+    for team in all_teams:
+        stats_matrix[team] = {}
+        for service in all_services:
+            stats_matrix[team][service] = 0
+    
+    # Popola la matrice con i dati reali
+    for stat in flag_stats:
+        team = stat['team']
+        service = stat['sploit']
+        count = stat['accepted_flags']
+        stats_matrix[team][service] = count
+        team_totals[team] += count
+    
+    response = {
+        'tick': current_tick,
+        'tick_duration': tick_duration,
+        'teams': all_teams,
+        'services': all_services,
+        'stats_matrix': stats_matrix,
+        'team_totals': dict(team_totals),
+        'start_time': start_time,
+        'tick_start_time': tick_start_time,
+        'tick_end_time': tick_end_time
+    }
+    
+    return jsonify(response)
+
+
+@api.route('/team_stats_overall', methods=['GET'])
+@auth.auth_required
+def get_team_stats_overall():
+    """
+    Endpoint per ottenere le statistiche generali delle flag per team e servizio
+    Considera tutti i tick e ordina i team secondo la classifica della scoreboard
+    """
+    import requests
+    
+    with db_cursor(True) as (_, curs):
+        # Query per ottenere tutte le statistiche delle flag accettate per team e servizio
+        curs.execute("""
+            SELECT 
+                team,
+                sploit,
+                COUNT(*) as accepted_flags,
+                MIN(time) as first_flag_time,
+                MAX(time) as last_flag_time
+            FROM flags 
+            WHERE status = %s
+            GROUP BY team, sploit
+            ORDER BY team, sploit
+        """, (FlagStatus.ACCEPTED.name,))
+        
+        flag_stats = curs.fetchall()
+        
+        # Query per ottenere tutti i team e servizi distinti
+        curs.execute("SELECT DISTINCT sploit FROM flags ORDER BY sploit")
+        all_services = [row['sploit'] for row in curs.fetchall()]
+        
+        curs.execute("SELECT DISTINCT team FROM flags ORDER BY team")
+        all_teams = [row['team'] for row in curs.fetchall()]
+    
+    # Organizza i dati in una struttura più facilmente utilizzabile dal frontend
+    stats_matrix = {}
+    team_totals = defaultdict(int)
+    
+    # Inizializza la matrice con zeri
+    for team in all_teams:
+        stats_matrix[team] = {}
+        for service in all_services:
+            stats_matrix[team][service] = 0
+    
+    # Popola la matrice con i dati reali
+    for stat in flag_stats:
+        team = stat['team']
+        service = stat['sploit']
+        count = stat['accepted_flags']
+        stats_matrix[team][service] = count
+        team_totals[team] += count
+    
+    # Prova a ottenere l'ordine dalla scoreboard
+    team_order = all_teams.copy()  # fallback all'ordine alfabetico
+    try:
+        scoreboard_response = requests.get('http://10.10.0.1/api/scoreboard', timeout=5)
+        if scoreboard_response.status_code == 200:
+            scoreboard_data = scoreboard_response.json()
+            # Estrai l'ordine dei team dalla scoreboard (ordinati per punteggio)
+            team_order = [score_entry['team'] for score_entry in scoreboard_data['scores']]
+            # Filtra solo i team che esistono nei nostri dati
+            team_order = [team for team in team_order if team in all_teams]
+            # Aggiungi eventuali team mancanti alla fine
+            missing_teams = [team for team in all_teams if team not in team_order]
+            team_order.extend(missing_teams)
+    except Exception as e:
+        print(f"Errore nel recuperare la scoreboard: {e}")
+        # Usa l'ordine alfabetico come fallback
+        pass
+    
+    response = {
+        'teams': team_order,
+        'services': all_services,
+        'stats_matrix': stats_matrix,
+        'team_totals': dict(team_totals),
+        'total_flags': sum(team_totals.values())
+    }
+    
+    return jsonify(response)
+
+
+@api.route('/team_stats_compare', methods=['GET'])
+@auth.auth_required
+def get_team_stats_compare():
+    """
+    Endpoint per confrontare le statistiche tra due tick consecutivi
+    Rileva quando si smette di exploitare un team (da >0 a 0 flag)
+    """
+    config = reloader.get_config()
+    tick_duration = config.get('ROUND_TIME', 60)
+    start_time = config.get('START_TIME', round(time.time()))
+    
+    # Ottieni i tick da confrontare
+    current_tick = request.args.get('current_tick', type=int)
+    previous_tick = request.args.get('previous_tick', type=int)
+    
+    if current_tick is None:
+        current_time = round(time.time())
+        current_tick = max(1, (current_time - start_time) // tick_duration + 1)
+    
+    if previous_tick is None:
+        previous_tick = max(1, current_tick - 1)
+    
+    # Non confrontare se siamo al primo tick
+    if previous_tick < 1 or current_tick <= previous_tick:
+        return jsonify({
+            'current_tick': current_tick,
+            'previous_tick': previous_tick,
+            'alerts': [],
+            'message': 'No comparison available'
+        })
+    
+    def get_tick_stats(tick):
+        tick_start = start_time + (tick - 1) * tick_duration
+        tick_end = start_time + tick * tick_duration
+        
+        with db_cursor(True) as (_, curs):
+            curs.execute("""
+                SELECT 
+                    team,
+                    sploit,
+                    COUNT(*) as accepted_flags
+                FROM flags 
+                WHERE status = %s 
+                    AND time >= %s 
+                    AND time < %s
+                GROUP BY team, sploit
+            """, (FlagStatus.ACCEPTED.name, tick_start, tick_end))
+            
+            return curs.fetchall()
+    
+    # Ottieni le statistiche per entrambi i tick
+    current_stats = get_tick_stats(current_tick)
+    previous_stats = get_tick_stats(previous_tick)
+    
+    # Organizza i dati in dizionari per facilitare il confronto
+    def organize_stats(stats):
+        organized = defaultdict(lambda: defaultdict(int))
+        for stat in stats:
+            organized[stat['team']][stat['sploit']] = stat['accepted_flags']
+        return organized
+    
+    current_data = organize_stats(current_stats)
+    previous_data = organize_stats(previous_stats)
+    
+    # Trova gli alert (team che sono passati da >0 a 0 flag)
+    alerts = []
+    
+    # Ottieni tutti i team e servizi coinvolti
+    all_teams = set(list(current_data.keys()) + list(previous_data.keys()))
+    all_services = set()
+    for team_data in list(current_data.values()) + list(previous_data.values()):
+        all_services.update(team_data.keys())
+    
+    for team in all_teams:
+        for service in all_services:
+            previous_count = previous_data[team][service]
+            current_count = current_data[team][service]
+            
+            # Alert se da >0 si va a 0
+            if previous_count > 0 and current_count == 0:
+                alerts.append({
+                    'team': team,
+                    'service': service,
+                    'previous_flags': previous_count,
+                    'current_flags': current_count,
+                    'type': 'exploit_stopped'
+                })
+    
+    response = {
+        'current_tick': current_tick,
+        'previous_tick': previous_tick,
+        'alerts': alerts,
+        'total_alerts': len(alerts)
+    }
+    
+    return jsonify(response)
