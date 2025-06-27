@@ -53,9 +53,11 @@ Il sistema ora include un avanzato sistema di notifiche che avvisa automaticamen
 
 ### 2. By Tick (Modalità Dettagliata)
 - **Statistiche per Tick**: Mostra le flag rubate nel tick specificato
+- **🆕 Ultimo Tick Automatico**: All'apertura, mostra automaticamente l'ultimo tick disponibile
+- **🆕 Auto Refresh Sincronizzato**: Aggiornamento automatico sincronizzato con i tick reali (ogni 2 minuti)
 - **Navigazione Tick**: Controlli per spostarsi tra i tick o saltare a uno specifico
+- **🆕 Pulsante "Latest"**: Salta rapidamente all'ultimo tick disponibile  
 - **Informazioni Temporali**: Visualizza orari di inizio e fine del tick selezionato
-- **Auto Refresh**: Aggiornamento automatico ogni 30 secondi con alert automatici
 - **🆕 Check Manual**: Pulsante per controllare manualmente gli alert
 
 ## Funzionalità Comuni
@@ -182,10 +184,14 @@ Il sistema ora include un avanzato sistema di notifiche che avvisa automaticamen
 
 ### Modalità By Tick con Alert
 1. Fare clic su "By Tick" nel toggle in alto
-2. **Attivare Auto Refresh** per monitoraggio in tempo reale con alert
-3. Utilizzare i controlli per navigare tra i tick
-4. Gli alert appariranno automaticamente quando un exploit smette di funzionare
-5. Configurare le notifiche tramite l'icona delle impostazioni
+2. **La pagina si apre automaticamente sull'ultimo tick disponibile**
+3. **L'Auto Refresh si attiva automaticamente e si sincronizza con i tick reali (ogni 2 minuti)**
+4. Utilizzare i controlli per navigare tra i tick:
+   - Pulsanti "Previous/Next" per navigazione sequenziale
+   - Input diretto del numero tick
+   - **🆕 Pulsante "Latest"** per saltare all'ultimo tick
+5. Gli alert appariranno automaticamente quando un exploit smette di funzionare
+6. Configurare le notifiche tramite l'icona delle impostazioni
 
 ### Gestione Alert
 1. **Alert Automatici**: Si attivano con auto refresh in modalità tick
@@ -220,6 +226,8 @@ La modalità "Overall Statistics" si integra con la scoreboard ufficiale:
 - L'ordinamento per scoreboard viene aggiornato ad ogni richiesta alla modalità overall
 - Le due modalità sono indipendenti e mantengono stati separati
 - L'auto refresh attiva automaticamente il controllo degli alert
+- **🆕 Auto refresh sincronizzato**: In modalità tick, l'aggiornamento è sincronizzato con i tick reali (ogni 2 minuti)
+- **🆕 Caricamento ultimo tick**: La modalità tick si apre sempre sull'ultimo tick disponibile
 - Il sistema di notifiche è completamente asincrono e non blocca l'interfaccia
 - Le impostazioni vengono persistite nel localStorage del browser
 

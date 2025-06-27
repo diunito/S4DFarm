@@ -62,6 +62,13 @@
                 <div class="text-caption">Tick End</div>
                 <div class="text-body2">{{ formatTime(tickStats.tick_end_time) }}</div>
               </div>
+              <div v-if="autoRefresh" class="col">
+                <div class="text-caption">Auto Refresh</div>
+                <div class="text-body2 text-positive">
+                  <q-icon name="sync" class="q-mr-xs" />
+                  Sincronizzato ({{ tickStats.tick_duration }}s)
+                </div>
+              </div>
               <div class="col">
                 <div class="text-caption">Exploit Alerts</div>
                 <q-btn 
@@ -91,7 +98,7 @@
           />
           <q-input
             v-model.number="currentTick"
-            @update:model-value="loadTickStats"
+            @update:model-value="(value) => loadTickStats(value)"
             type="number"
             min="1"
             dense
@@ -106,7 +113,15 @@
             size="sm"
           />
           <q-btn 
-            @click="loadTickStats" 
+            @click="jumpToLatestTick" 
+            icon="skip_next" 
+            color="info"
+            round
+            size="sm"
+            title="Vai all'ultimo tick"
+          />
+          <q-btn 
+            @click="loadTickStats(currentTick)" 
             icon="refresh" 
             color="secondary"
             round
@@ -214,6 +229,7 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import api from '@/services/api'
 import ExploitAlerts from '@/components/ExploitAlerts.vue'
 import NotificationSettings from '@/components/NotificationSettings.vue'
+import { useExploitNotifications } from '@/composables/useExploitNotifications'
 
 export default {
   name: 'TeamStats',
@@ -232,6 +248,9 @@ export default {
     const exploitAlerts = ref(null)
     let refreshInterval = null
     let previousTickValue = null
+
+    // Usa il composable per le notifiche
+    const { manualCheck } = useExploitNotifications()
 
     const currentStats = computed(() => {
       return viewMode.value === 'overall' ? overallStats.value : tickStats.value
@@ -304,14 +323,21 @@ export default {
       }
     }
 
-    const loadTickStats = async () => {
+    const loadTickStats = async (requestedTick = null) => {
       loading.value = true
       try {
-        const response = await api.get('/team_stats', {
-          params: { tick: currentTick.value }
-        })
+        const params = {}
+        if (requestedTick !== null) {
+          params.tick = requestedTick
+        }
+        // Se non specifichiamo il tick, l'API restituirà l'ultimo tick disponibile
+        
+        const response = await api.get('/team_stats', { params })
         tickStats.value = response.data
+        
+        // Aggiorna currentTick con quello effettivo restituito dall'API
         if (currentTick.value !== response.data.tick) {
+          previousTickValue = currentTick.value
           currentTick.value = response.data.tick
         }
       } catch (error) {
@@ -324,12 +350,14 @@ export default {
 
     const onViewModeChange = () => {
       stopAutoRefresh() // Stop auto refresh quando si cambia modalità
-      autoRefresh.value = false
       
       if (viewMode.value === 'overall') {
+        autoRefresh.value = false
         loadOverallStats()
       } else {
-        loadTickStats()
+        // In modalità tick, carica l'ultimo tick disponibile e attiva auto refresh
+        loadTickStats() // Senza parametri carica l'ultimo tick
+        autoRefresh.value = true // Attiva automaticamente l'auto refresh per i tick
       }
     }
 
@@ -338,17 +366,22 @@ export default {
       if (newTick >= 1) {
         previousTickValue = currentTick.value
         currentTick.value = newTick
-        loadTickStats()
+        loadTickStats(newTick) // Carica il tick specifico richiesto
       }
     }
 
+    const jumpToLatestTick = () => {
+      // Carica l'ultimo tick disponibile
+      loadTickStats() // Senza parametri carica l'ultimo tick
+    }
+
     const checkExploitAlerts = async () => {
-      if (exploitAlerts.value && currentTick.value > 1) {
+      if (currentTick.value > 1) {
         checkingAlerts.value = true
         try {
-          await exploitAlerts.value.manualCheck(currentTick.value, currentTick.value - 1)
+          await manualCheck(currentTick.value, currentTick.value - 1)
         } catch (error) {
-          console.error('Error checking alerts manually:', error)
+          console.error('Error checking for exploit alerts:', error)
         } finally {
           checkingAlerts.value = false
         }
@@ -402,12 +435,27 @@ export default {
       return baseClass
     }
 
+    const calculateNextTickTime = () => {
+      if (!tickStats.value) return null
+      
+      const tickDuration = tickStats.value.tick_duration || 120 // 2 minuti di default
+      const startTime = tickStats.value.start_time
+      const currentTick = tickStats.value.tick
+      
+      // Calcola quando inizierà il prossimo tick
+      const nextTickStartTime = startTime + (currentTick * tickDuration)
+      
+      return nextTickStartTime * 1000 // Converti in millisecondi per JavaScript
+    }
+
     const startAutoRefresh = () => {
       if (refreshInterval) {
         clearInterval(refreshInterval)
       }
-      refreshInterval = setInterval(() => {
+
+      const refreshFunction = () => {
         const oldTick = currentTick.value
+        
         if (viewMode.value === 'overall') {
           loadOverallStats()
         } else {
@@ -415,10 +463,42 @@ export default {
             // Controlla se il tick è cambiato durante l'auto refresh
             if (currentTick.value > oldTick) {
               previousTickValue = oldTick
+              console.log(`Tick avanzato automaticamente: ${oldTick} → ${currentTick.value}`)
             }
           })
         }
-      }, 30000) // Refresh ogni 30 secondi
+      }
+
+      // Per la modalità tick, sincronizza con i tick reali
+      if (viewMode.value === 'tick') {
+        const nextTickTime = calculateNextTickTime()
+        
+        if (nextTickTime) {
+          const now = Date.now()
+          const timeUntilNextTick = nextTickTime - now
+          
+          if (timeUntilNextTick > 0) {
+            // Avvia il primo refresh quando inizia il prossimo tick
+            setTimeout(() => {
+              refreshFunction()
+              // Poi continua con refresh ogni 2 minuti (tick duration)
+              refreshInterval = setInterval(refreshFunction, (tickStats.value?.tick_duration || 120) * 1000)
+            }, timeUntilNextTick)
+            
+            console.log(`Auto refresh sincronizzato: prossimo aggiornamento in ${Math.round(timeUntilNextTick / 1000)} secondi`)
+          } else {
+            // Se siamo già nel tick corrente, inizia subito e poi ogni tick duration
+            refreshFunction()
+            refreshInterval = setInterval(refreshFunction, (tickStats.value?.tick_duration || 120) * 1000)
+          }
+        } else {
+          // Fallback: refresh ogni 30 secondi se non riusciamo a calcolare il timing
+          refreshInterval = setInterval(refreshFunction, 30000)
+        }
+      } else {
+        // Per la modalità overall, usa refresh ogni 30 secondi
+        refreshInterval = setInterval(refreshFunction, 30000)
+      }
     }
 
     const stopAutoRefresh = () => {
@@ -434,6 +514,14 @@ export default {
         startAutoRefresh()
       } else {
         stopAutoRefresh()
+      }
+    })
+
+    // Watch per riavviare auto refresh quando cambiano i dati del tick (per ricalcolare timing)
+    watch(() => tickStats.value?.tick, (newTick, oldTick) => {
+      if (autoRefresh.value && viewMode.value === 'tick' && newTick !== oldTick) {
+        console.log('Tick cambiato, riavvio auto refresh sincronizzato')
+        startAutoRefresh()
       }
     })
 
@@ -469,6 +557,7 @@ export default {
       loadTickStats,
       onViewModeChange,
       changeTick,
+      jumpToLatestTick,
       checkExploitAlerts,
       onAlertTriggered,
       formatTime,

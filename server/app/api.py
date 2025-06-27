@@ -12,6 +12,31 @@ import reloader
 from database import db_cursor
 from models import FlagStatus
 
+def is_valid_team(team):
+    """
+    Verifica se un team è valido per le statistiche
+    Esclude team non validi come 'nop', server team, e dati malformati
+    """
+    if not team or not team.strip():
+        return False
+    
+    team = team.strip()
+    
+    # Lista di team da escludere
+    invalid_teams = ['*', 'nop', '']
+    if team in invalid_teams:
+        return False
+    
+    # Esclude server team (tipicamente 10.60.0.x)
+    if team.startswith('10.60.0.'):
+        return False
+    
+    # Esclude team che contengono 'nop' nel nome
+    if 'nop' in team.lower():
+        return False
+    
+    return True
+
 api = Blueprint('api', __name__, url_prefix='/api')
 
 FLAGS_RECEIVED = Counter(
@@ -179,7 +204,7 @@ def get_team_stats():
     Restituisce l'andamento delle flag accettate per ogni team divise per servizio (sploit)
     """
     config = reloader.get_config()
-    tick_duration = config.get('ROUND_TIME', 60)  # durata in secondi di un tick
+    tick_duration = config.get('TICK_DURATION', 120)  # durata in secondi di un tick
     start_time = config.get('START_TIME', round(time.time()))
     
     # Ottieni il tick corrente o da parametro
@@ -216,12 +241,22 @@ def get_team_stats():
         
         flag_stats = curs.fetchall()
         
-        # Query per ottenere tutti i team e servizi distinti
-        curs.execute("SELECT DISTINCT sploit FROM flags ORDER BY sploit")
+        # Query per ottenere tutti i team e servizi distinti (filtra dati malformati e team non validi)
+        curs.execute("""
+            SELECT DISTINCT sploit 
+            FROM flags 
+            WHERE sploit IS NOT NULL AND sploit != '' 
+            ORDER BY sploit
+        """)
         all_services = [row['sploit'] for row in curs.fetchall()]
         
-        curs.execute("SELECT DISTINCT team FROM flags ORDER BY team")
-        all_teams = [row['team'] for row in curs.fetchall()]
+        curs.execute("""
+            SELECT DISTINCT team 
+            FROM flags 
+            WHERE team IS NOT NULL AND team != ''
+            ORDER BY team
+        """)
+        all_teams = [row['team'] for row in curs.fetchall() if is_valid_team(row['team'])]
     
     # Organizza i dati in una struttura più facilmente utilizzabile dal frontend
     stats_matrix = {}
@@ -233,13 +268,17 @@ def get_team_stats():
         for service in all_services:
             stats_matrix[team][service] = 0
     
-    # Popola la matrice con i dati reali
+    # Popola la matrice con i dati reali (filtra team non validi)
     for stat in flag_stats:
         team = stat['team']
         service = stat['sploit']
         count = stat['accepted_flags']
-        stats_matrix[team][service] = count
-        team_totals[team] += count
+        
+        # Filtra team non validi e assicurati che il team sia nella lista valida
+        if is_valid_team(team) and team in all_teams:
+            if team in stats_matrix and service in stats_matrix[team]:
+                stats_matrix[team][service] = count
+                team_totals[team] += count
     
     response = {
         'tick': current_tick,
@@ -282,12 +321,22 @@ def get_team_stats_overall():
         
         flag_stats = curs.fetchall()
         
-        # Query per ottenere tutti i team e servizi distinti
-        curs.execute("SELECT DISTINCT sploit FROM flags ORDER BY sploit")
+        # Query per ottenere tutti i team e servizi distinti (filtra dati malformati e team non validi)
+        curs.execute("""
+            SELECT DISTINCT sploit 
+            FROM flags 
+            WHERE sploit IS NOT NULL AND sploit != '' 
+            ORDER BY sploit
+        """)
         all_services = [row['sploit'] for row in curs.fetchall()]
         
-        curs.execute("SELECT DISTINCT team FROM flags ORDER BY team")
-        all_teams = [row['team'] for row in curs.fetchall()]
+        curs.execute("""
+            SELECT DISTINCT team 
+            FROM flags 
+            WHERE team IS NOT NULL AND team != ''
+            ORDER BY team
+        """)
+        all_teams = [row['team'] for row in curs.fetchall() if is_valid_team(row['team'])]
     
     # Organizza i dati in una struttura più facilmente utilizzabile dal frontend
     stats_matrix = {}
@@ -299,13 +348,17 @@ def get_team_stats_overall():
         for service in all_services:
             stats_matrix[team][service] = 0
     
-    # Popola la matrice con i dati reali
+    # Popola la matrice con i dati reali (filtra team non validi)
     for stat in flag_stats:
         team = stat['team']
         service = stat['sploit']
         count = stat['accepted_flags']
-        stats_matrix[team][service] = count
-        team_totals[team] += count
+        
+        # Filtra team non validi e assicurati che il team sia nella lista valida
+        if is_valid_team(team) and team in all_teams:
+            if team in stats_matrix and service in stats_matrix[team]:
+                stats_matrix[team][service] = count
+                team_totals[team] += count
     
     # Prova a ottenere l'ordine dalla scoreboard
     team_order = all_teams.copy()  # fallback all'ordine alfabetico
@@ -353,7 +406,7 @@ def get_team_stats_compare():
     
     if current_tick is None:
         current_time = round(time.time())
-        current_tick = max(1, (current_time - start_time) // tick_duration + 1)
+        current_tick = max(1, (current_time - start_time) // tick_duration)
     
     if previous_tick is None:
         previous_tick = max(1, current_tick - 1)
@@ -403,11 +456,13 @@ def get_team_stats_compare():
     # Trova gli alert (team che sono passati da >0 a 0 flag)
     alerts = []
     
-    # Ottieni tutti i team e servizi coinvolti
-    all_teams = set(list(current_data.keys()) + list(previous_data.keys()))
+    # Ottieni tutti i team e servizi coinvolti (filtra dati malformati e team non validi)
+    all_teams = set(team for team in list(current_data.keys()) + list(previous_data.keys()) 
+                   if is_valid_team(team))
     all_services = set()
     for team_data in list(current_data.values()) + list(previous_data.values()):
-        all_services.update(team_data.keys())
+        all_services.update(service for service in team_data.keys() 
+                          if service and service.strip())
     
     for team in all_teams:
         for service in all_services:
