@@ -105,6 +105,8 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - ./vol/redis:/data
+    ports:
+      - "6379:6379"
 
   external_redis:
     image: redis:7.2.0-alpine

@@ -12,6 +12,11 @@ import reloader
 from database import db_cursor
 from models import FlagStatus
 
+import redis
+import logging
+import json
+import requests
+
 def is_valid_team(team):
     """
     Verifica se un team è valido per le statistiche
@@ -294,99 +299,104 @@ def get_team_stats():
     
     return jsonify(response)
 
-
-@api.route('/team_stats_overall', methods=['GET'])
+@api.route("/team_stats_overall", methods=["GET"])
 @auth.auth_required
 def get_team_stats_overall():
     """
-    Endpoint per ottenere le statistiche generali delle flag per team e servizio
-    Considera tutti i tick e ordina i team secondo la classifica della scoreboard
+    Statistiche complessive (tutti i tick) delle flag per team/servizio.
+    I team sono ordinati secondo la scoreboard salvata in Redis (fallback alfabetico).
     """
-    import requests
-    
+
+    config = reloader.get_config()
+
+    teams_cfg = config.get('TEAMS', {})
+    ip_to_name = {ip: name for name, ip in teams_cfg.items()}
+
+    # 1. ---------- Query DB ----------
     with db_cursor(True) as (_, curs):
-        # Query per ottenere tutte le statistiche delle flag accettate per team e servizio
+        # Flag accettate per team/servizio
         curs.execute("""
-            SELECT 
-                team,
-                sploit,
-                COUNT(*) as accepted_flags,
-                MIN(time) as first_flag_time,
-                MAX(time) as last_flag_time
-            FROM flags 
+            SELECT team, sploit, COUNT(*) AS accepted_flags
+            FROM flags
             WHERE status = %s
             GROUP BY team, sploit
-            ORDER BY team, sploit
         """, (FlagStatus.ACCEPTED.name,))
-        
         flag_stats = curs.fetchall()
-        
-        # Query per ottenere tutti i team e servizi distinti (filtra dati malformati e team non validi)
+
+        # Elenco servizi
         curs.execute("""
-            SELECT DISTINCT sploit 
-            FROM flags 
-            WHERE sploit IS NOT NULL AND sploit != '' 
+            SELECT DISTINCT sploit
+            FROM flags
+            WHERE sploit <> '' AND sploit IS NOT NULL
             ORDER BY sploit
         """)
-        all_services = [row['sploit'] for row in curs.fetchall()]
-        
+        all_services = [r["sploit"] for r in curs.fetchall()]
+
+        # Elenco team validi
         curs.execute("""
-            SELECT DISTINCT team 
-            FROM flags 
-            WHERE team IS NOT NULL AND team != ''
+            SELECT DISTINCT team
+            FROM flags
+            WHERE team <> '' AND team IS NOT NULL
             ORDER BY team
         """)
-        all_teams = [row['team'] for row in curs.fetchall() if is_valid_team(row['team'])]
-    
-    # Organizza i dati in una struttura più facilmente utilizzabile dal frontend
-    stats_matrix = {}
-    team_totals = defaultdict(int)
-    
-    # Inizializza la matrice con zeri
-    for team in all_teams:
-        stats_matrix[team] = {}
-        for service in all_services:
-            stats_matrix[team][service] = 0
-    
-    # Popola la matrice con i dati reali (filtra team non validi)
-    for stat in flag_stats:
-        team = stat['team']
-        service = stat['sploit']
-        count = stat['accepted_flags']
-        
-        # Filtra team non validi e assicurati che il team sia nella lista valida
-        if is_valid_team(team) and team in all_teams:
-            if team in stats_matrix and service in stats_matrix[team]:
-                stats_matrix[team][service] = count
-                team_totals[team] += count
-    
-    # Prova a ottenere l'ordine dalla scoreboard
-    team_order = all_teams.copy()  # fallback all'ordine alfabetico
+        all_teams = [r["team"] for r in curs.fetchall() if is_valid_team(r["team"])]
+
+    # 2. ---------- Costruzione matrice ----------
+    stats_matrix = {t: {s: 0 for s in all_services} for t in all_teams}
+    team_totals   = defaultdict(int)
+
+    for row in flag_stats:
+        team, service, count = row["team"], row["sploit"], row["accepted_flags"]
+        if is_valid_team(team):
+            stats_matrix[team][service] = count
+            team_totals[team]          += count
+
+    # 3. ---------- Ordine team dalla scoreboard ----------
+    team_order = all_teams[:]  # default: alfabetico
     try:
-        scoreboard_response = requests.get('http://10.10.0.1/api/scoreboard', timeout=5)
-        if scoreboard_response.status_code == 200:
-            scoreboard_data = scoreboard_response.json()
-            # Estrai l'ordine dei team dalla scoreboard (ordinati per punteggio)
-            team_order = [score_entry['team'] for score_entry in scoreboard_data['scores']]
-            # Filtra solo i team che esistono nei nostri dati
-            team_order = [team for team in team_order if team in all_teams]
-            # Aggiungi eventuali team mancanti alla fine
-            missing_teams = [team for team in all_teams if team not in team_order]
-            team_order.extend(missing_teams)
-    except Exception as e:
-        print(f"Errore nel recuperare la scoreboard: {e}")
-        # Usa l'ordine alfabetico come fallback
-        pass
-    
-    response = {
-        'teams': team_order,
-        'services': all_services,
-        'stats_matrix': stats_matrix,
-        'team_totals': dict(team_totals),
-        'total_flags': sum(team_totals.values())
-    }
-    
-    return jsonify(response)
+        r = redis.from_url(config.get("REDIS_URL", "redis://redis:6379/1"))
+        raw = r.get("scoreboard_data")
+        logging.info(raw)
+        if raw:
+            try:
+                scoreboard = json.loads(raw.decode())
+                logging.info(f"Team config (ip_to_name): {ip_to_name}")
+                logging.info(f"Team nella scoreboard: {[e['team'] for e in scoreboard.get('scores', [])]}")
+                logging.info(f"all_teams dal DB: {all_teams}")
+                logging.info(f"Team mappati: {[ip_to_name.get(e['team']) for e in scoreboard.get('scores', [])]}")
+
+                ordered = [
+                    ip_to_name[e["team"]]
+                    for e in sorted(
+                        scoreboard.get("scores", []),
+                        key=lambda x: x["score"],
+                        reverse=True  # decrescente, punteggio più alto primo
+                    )
+                    if e["team"] in ip_to_name and ip_to_name[e["team"]] in all_teams
+                ]
+                team_order = ordered + [t for t in all_teams if t not in ordered]
+                
+                logging.info(team_order)
+
+                logging.info(f"Team da scoreboard (raw): {[e['team'] for e in scoreboard['scores']]}")
+                #logging.info(f"Team da scoreboard (mapped): {[resolve_team_name(e['team']) for e in scoreboard['scores']]}")
+                logging.info(f"Team validi nel sistema: {all_teams}")
+
+            except (json.JSONDecodeError, KeyError) as e:
+                logging.warning("Scoreboard malformata in Redis: %s", e)
+        else:
+            logging.info("Chiave 'scoreboard_data' non presente in Redis.")
+    except redis.RedisError as e:
+        logging.error("Redis error: %s", e)
+
+    # 4. ---------- Risposta ----------
+    return jsonify({
+        "teams"        : team_order,
+        "services"     : all_services,
+        "stats_matrix" : stats_matrix,
+        "team_totals"  : dict(team_totals),
+        "total_flags"  : sum(team_totals.values()),
+    })
 
 
 @api.route('/team_stats_compare', methods=['GET'])
