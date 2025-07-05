@@ -15,18 +15,8 @@ def fetch_scoreboard(tick_num=None):
         if tick_num is None:
             # Prima prova a ottenere il tick corrente da un endpoint generico
             try:
-                response = requests.get("http://10.10.0.1/api/scoreboard/chart/current", timeout=5)
-                if response.status_code == 404:
-                    # Se non esiste, prova con un numero alto e poi decrementa
-                    for i in range(100, 0, -1):
-                        response = requests.get(f"http://10.10.0.1/api/scoreboard/chart/{i}", timeout=5)
-                        if response.status_code == 200:
-                            tick_num = i
-                            break
-                    if tick_num is None:
-                        tick_num = 1  # Fallback al primo tick
-                else:
-                    tick_num = "current"
+                response = requests.get("http://10.10.0.1/api/status", timeout=5)
+                tick_num = response.json().get('currentRound', 1)
             except:
                 tick_num = 1  # Fallback al primo tick
 
