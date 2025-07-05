@@ -21,51 +21,38 @@ def fetch_scoreboard(tick_num=None):
                 tick_num = 1  # Fallback al primo tick
 
         # Fetch della scoreboard
-        url = f"http://10.10.0.1/api/scoreboard/chart/{tick_num}"
+        url = f"http://10.10.0.1/api/scoreboard/table/{tick_num}"
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
 
         # Verifica che abbia la struttura attesa
-        if 'teams' not in data or 'rounds' not in data:
-            raise ValueError("Formato scoreboard non valido: mancano 'teams' o 'rounds'")
+        if 'scoreboard' not in data:
+            raise ValueError("Formato scoreboard non valido: manca 'scoreboard'")
 
         # Trasforma i dati nel formato atteso dal backend
         transformed_data = {
-            'teams': [],
-            'rounds': data['rounds']
+            'teams': []
         }
 
-        # Ordina i team per punteggio dell'ultimo round disponibile
-        teams_with_scores = []
-        for team in data['teams']:
-            if team.get('nop', False) or team.get('guest', False):
-                continue  # Salta team NOP e guest
-            
-            scores = team.get('score', [])
-            last_score = scores[-1] if scores else 0
-            teams_with_scores.append({
-                'name': team['shortname'],
-                'score': last_score,
-                'scores': scores
-            })
-
-        # Ordina per punteggio decrescente
-        teams_with_scores.sort(key=lambda x: x['score'], reverse=True)
-        
-        # Aggiungi i team ordinati ai dati trasformati
-        for team in teams_with_scores:
+        # Ordina i team per posizione nella scoreboard
+        scoreboard = data['scoreboard']
+        for team_data in scoreboard:
+            # Salta team NOP e guest
+            if team_data.get('nop', False) or team_data.get('guest', False):
+                continue
+                
             transformed_data['teams'].append({
-                'name': team['name'],
-                'score': team['score'],
-                'scores': team['scores']
+                'name': team_data['shortname'],
+                'score': team_data['score'],
+                'position': team_data['position']
             })
 
+        print(f"✅ Scoreboard aggiornata (tick {tick_num}, {len(transformed_data['teams'])} team)")
         # Salva in Redis
         r = redis.Redis(host="localhost", port=6379, db=1)
         r.set("scoreboard_data", json.dumps(transformed_data))
         
-        print(f"✅ Scoreboard aggiornata (tick {tick_num}, {len(transformed_data['teams'])} team)")
         return True
 
     except requests.exceptions.RequestException as e:
