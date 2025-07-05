@@ -16,7 +16,7 @@ def fetch_scoreboard(tick_num=None):
             # Prima prova a ottenere il tick corrente da un endpoint generico
             try:
                 response = requests.get("http://10.10.0.1/api/status", timeout=5)
-                tick_num = response.json().get('currentRound', 1)
+                tick_num = response.json().get('currentRound', 1) - 1
             except:
                 tick_num = 1  # Fallback al primo tick
 

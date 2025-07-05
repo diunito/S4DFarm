@@ -44,10 +44,11 @@ def get_scoreboard_team_order(tick=None, all_teams=None):
             data = json.loads(scoreboard_data)
             logging.info(f"Scoreboard data letta da Redis: {len(data.get('teams', []))} team")
             
-            # Ordina i team secondo l'ordine nella scoreboard (già ordinati per punteggio)
+            # Estrai e ordina i team secondo l'ordine già presente nei dati
+            # I dati da fetch_scoreboard.py sono già ordinati per punteggio
             ordered = []
             for team_data in data.get('teams', []):
-                team_name = team_data.get('name')
+                team_name = team_data.get('name')  # fetch_scoreboard.py usa 'name'
                 if team_name and team_name in all_teams:
                     ordered.append(team_name)
                     logging.info(f"Team {team_name} aggiunto all'ordine con score {team_data.get('score', 0)}")
