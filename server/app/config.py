@@ -69,6 +69,9 @@ CONFIG = {
     'TEAMS': get_team_dict_from_id(),
     'FLAG_FORMAT': os.environ.get('FLAG_FORMAT', r'[A-Z0-9]{31}='),
 
+    # Scoreboard configuration for team ranking
+    'SCOREBOARD_URL': os.environ.get('SCOREBOARD_URL', 'http://host.docker.internal:7000'),
+
     # This configures how and where to submit flags.
     # The protocol must be a module in protocols/ directory.
     # (Default values are there just for reference)

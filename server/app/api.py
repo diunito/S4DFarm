@@ -17,6 +17,86 @@ import logging
 import json
 import requests
 
+def get_scoreboard_team_order(tick=None, all_teams=None):
+    """
+    Recupera l'ordine dei team dalla nuova scoreboard API.
+    
+    Args:
+        tick: numero del tick per cui recuperare la scoreboard (None per l'ultimo)
+        all_teams: lista di tutti i team validi dal DB
+        
+    Returns:
+        Lista ordinata dei team secondo la scoreboard
+    """
+    if not all_teams:
+        return []
+    
+    team_order = all_teams[:]  # default: alfabetico
+    
+    try:
+        # Configura l'endpoint della scoreboard
+        config = reloader.get_config()
+        scoreboard_url = config.get('SCOREBOARD_URL', 'http://host.docker.internal:7000')
+        
+        # Se non specificato, usa l'ultimo tick disponibile
+        if tick is None:
+            # Prova a calcolare l'ultimo tick
+            tick_duration = config.get('TICK_DURATION', 120)
+            start_time = config.get('START_TIME', round(time.time()))
+            current_time = round(time.time())
+            tick = max(1, (current_time - start_time) // tick_duration + 1)
+        
+        # Chiamata all'API della scoreboard
+        url = f"{scoreboard_url}/api/scoreboard/chart/{tick}"
+        logging.info(f"Recuperando scoreboard da: {url}")
+        
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        
+        scoreboard_data = response.json()
+        logging.info(f"Scoreboard data ricevuta: teams={len(scoreboard_data.get('teams', []))}, rounds={scoreboard_data.get('rounds', 'N/A')}")
+        
+        # Estrai i team e i loro punteggi per il tick specificato
+        teams_with_scores = []
+        for team_data in scoreboard_data.get('teams', []):
+            shortname = team_data.get('shortname')
+            scores = team_data.get('score', [])
+            
+            # Usa l'ultimo punteggio disponibile (tick-1 perché array 0-indexed)
+            score_index = min(tick - 1, len(scores) - 1)
+            if score_index >= 0:
+                score = scores[score_index]
+                teams_with_scores.append({
+                    'team': shortname,
+                    'score': score
+                })
+                logging.info(f"Team {shortname}: score={score} (index={score_index})")
+        
+        # Ordina per punteggio decrescente
+        teams_with_scores.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Mappa i nomi dei team alla lista valida
+        ordered = []
+        for team_data in teams_with_scores:
+            team_name = team_data['team']
+            if team_name in all_teams:
+                ordered.append(team_name)
+                logging.info(f"Team {team_name} aggiunto all'ordine con score {team_data['score']}")
+        
+        # Aggiungi i team che non sono nella scoreboard alla fine
+        team_order = ordered + [t for t in all_teams if t not in ordered]
+        
+        logging.info(f"Ordine finale dei team: {team_order}")
+        
+    except requests.RequestException as e:
+        logging.warning(f"Errore nella chiamata alla scoreboard API: {e}")
+    except (json.JSONDecodeError, KeyError) as e:
+        logging.warning(f"Errore nel parsing della scoreboard: {e}")
+    except Exception as e:
+        logging.error(f"Errore generico nel recupero scoreboard: {e}")
+    
+    return team_order
+
 def is_valid_team(team):
     """
     Verifica se un team è valido per le statistiche
@@ -285,10 +365,13 @@ def get_team_stats():
                 stats_matrix[team][service] = count
                 team_totals[team] += count
     
+    # Ottieni l'ordine dei team dalla scoreboard
+    team_order = get_scoreboard_team_order(current_tick, all_teams)
+    
     response = {
         'tick': current_tick,
         'tick_duration': tick_duration,
-        'teams': all_teams,
+        'teams': team_order,
         'services': all_services,
         'stats_matrix': stats_matrix,
         'team_totals': dict(team_totals),
@@ -304,13 +387,8 @@ def get_team_stats():
 def get_team_stats_overall():
     """
     Statistiche complessive (tutti i tick) delle flag per team/servizio.
-    I team sono ordinati secondo la scoreboard salvata in Redis (fallback alfabetico).
+    I team sono ordinati secondo la scoreboard.
     """
-
-    config = reloader.get_config()
-
-    teams_cfg = config.get('TEAMS', {})
-    ip_to_name = {ip: name for name, ip in teams_cfg.items()}
 
     # 1. ---------- Query DB ----------
     with db_cursor(True) as (_, curs):
@@ -352,42 +430,7 @@ def get_team_stats_overall():
             team_totals[team]          += count
 
     # 3. ---------- Ordine team dalla scoreboard ----------
-    team_order = all_teams[:]  # default: alfabetico
-    try:
-        r = redis.from_url(config.get("REDIS_URL", "redis://redis:6379/1"))
-        raw = r.get("scoreboard_data")
-        logging.info(raw)
-        if raw:
-            try:
-                scoreboard = json.loads(raw.decode())
-                logging.info(f"Team config (ip_to_name): {ip_to_name}")
-                logging.info(f"Team nella scoreboard: {[e['team'] for e in scoreboard.get('scores', [])]}")
-                logging.info(f"all_teams dal DB: {all_teams}")
-                logging.info(f"Team mappati: {[ip_to_name.get(e['team']) for e in scoreboard.get('scores', [])]}")
-
-                ordered = [
-                    ip_to_name[e["team"]]
-                    for e in sorted(
-                        scoreboard.get("scores", []),
-                        key=lambda x: x["score"],
-                        reverse=True  # decrescente, punteggio più alto primo
-                    )
-                    if e["team"] in ip_to_name and ip_to_name[e["team"]] in all_teams
-                ]
-                team_order = ordered + [t for t in all_teams if t not in ordered]
-                
-                logging.info(team_order)
-
-                logging.info(f"Team da scoreboard (raw): {[e['team'] for e in scoreboard['scores']]}")
-                #logging.info(f"Team da scoreboard (mapped): {[resolve_team_name(e['team']) for e in scoreboard['scores']]}")
-                logging.info(f"Team validi nel sistema: {all_teams}")
-
-            except (json.JSONDecodeError, KeyError) as e:
-                logging.warning("Scoreboard malformata in Redis: %s", e)
-        else:
-            logging.info("Chiave 'scoreboard_data' non presente in Redis.")
-    except redis.RedisError as e:
-        logging.error("Redis error: %s", e)
+    team_order = get_scoreboard_team_order(None, all_teams)
 
     # 4. ---------- Risposta ----------
     return jsonify({
