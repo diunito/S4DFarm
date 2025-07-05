@@ -156,6 +156,9 @@
         flat
         bordered
         dense
+        :rows-per-page-options="[0]"
+        :pagination="{ rowsPerPage: 0, page: 1 }"
+        :hide-pagination="false"
         class="stats-table"
       >
         <!-- Header personalizzato per evidenziare le colonne dei servizi -->
