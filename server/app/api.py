@@ -2,7 +2,9 @@ import importlib
 import time
 from collections import defaultdict
 from datetime import datetime
+import json
 
+import redis
 import redis.exceptions
 from flask import request, jsonify, Blueprint
 from prometheus_client import Counter, Gauge
@@ -19,10 +21,10 @@ import requests
 
 def get_scoreboard_team_order(tick=None, all_teams=None):
     """
-    Recupera l'ordine dei team dalla nuova scoreboard API.
+    Recupera l'ordine dei team dalla scoreboard cachata in Redis.
     
     Args:
-        tick: numero del tick per cui recuperare la scoreboard (None per l'ultimo)
+        tick: numero del tick (non utilizzato, ma mantenuto per compatibilità)
         all_teams: lista di tutti i team validi dal DB
         
     Returns:
@@ -34,66 +36,35 @@ def get_scoreboard_team_order(tick=None, all_teams=None):
     team_order = all_teams[:]  # default: alfabetico
     
     try:
-        # Configura l'endpoint della scoreboard
-        config = reloader.get_config()
-        scoreboard_url = config.get('SCOREBOARD_URL', 'http://host.docker.internal:7000')
+        # Leggi i dati della scoreboard da Redis
+        r = redis.Redis(host='localhost', port=6379, db=1)
+        scoreboard_data = r.get('scoreboard_data')
         
-        # Se non specificato, usa l'ultimo tick disponibile
-        if tick is None:
-            # Prova a calcolare l'ultimo tick
-            tick_duration = config.get('TICK_DURATION', 120)
-            start_time = config.get('START_TIME', round(time.time()))
-            current_time = round(time.time())
-            tick = max(1, (current_time - start_time) // tick_duration + 1)
-        
-        # Chiamata all'API della scoreboard
-        url = f"{scoreboard_url}/api/scoreboard/chart/{tick}"
-        logging.info(f"Recuperando scoreboard da: {url}")
-        
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        
-        scoreboard_data = response.json()
-        logging.info(f"Scoreboard data ricevuta: teams={len(scoreboard_data.get('teams', []))}, rounds={scoreboard_data.get('rounds', 'N/A')}")
-        
-        # Estrai i team e i loro punteggi per il tick specificato
-        teams_with_scores = []
-        for team_data in scoreboard_data.get('teams', []):
-            shortname = team_data.get('shortname')
-            scores = team_data.get('score', [])
+        if scoreboard_data:
+            data = json.loads(scoreboard_data)
+            logging.info(f"Scoreboard data letta da Redis: {len(data.get('teams', []))} team")
             
-            # Usa l'ultimo punteggio disponibile (tick-1 perché array 0-indexed)
-            score_index = min(tick - 1, len(scores) - 1)
-            if score_index >= 0:
-                score = scores[score_index]
-                teams_with_scores.append({
-                    'team': shortname,
-                    'score': score
-                })
-                logging.info(f"Team {shortname}: score={score} (index={score_index})")
-        
-        # Ordina per punteggio decrescente
-        teams_with_scores.sort(key=lambda x: x['score'], reverse=True)
-        
-        # Mappa i nomi dei team alla lista valida
-        ordered = []
-        for team_data in teams_with_scores:
-            team_name = team_data['team']
-            if team_name in all_teams:
-                ordered.append(team_name)
-                logging.info(f"Team {team_name} aggiunto all'ordine con score {team_data['score']}")
-        
-        # Aggiungi i team che non sono nella scoreboard alla fine
-        team_order = ordered + [t for t in all_teams if t not in ordered]
-        
-        logging.info(f"Ordine finale dei team: {team_order}")
-        
-    except requests.RequestException as e:
-        logging.warning(f"Errore nella chiamata alla scoreboard API: {e}")
+            # Ordina i team secondo l'ordine nella scoreboard (già ordinati per punteggio)
+            ordered = []
+            for team_data in data.get('teams', []):
+                team_name = team_data.get('name')
+                if team_name and team_name in all_teams:
+                    ordered.append(team_name)
+                    logging.info(f"Team {team_name} aggiunto all'ordine con score {team_data.get('score', 0)}")
+            
+            # Aggiungi i team che non sono nella scoreboard alla fine
+            team_order = ordered + [t for t in all_teams if t not in ordered]
+            
+            logging.info(f"Ordine finale dei team da Redis: {team_order}")
+        else:
+            logging.warning("Nessun dato scoreboard trovato in Redis, uso ordine alfabetico")
+            
+    except redis.exceptions.ConnectionError as e:
+        logging.warning(f"Errore connessione Redis: {e}")
     except (json.JSONDecodeError, KeyError) as e:
-        logging.warning(f"Errore nel parsing della scoreboard: {e}")
+        logging.warning(f"Errore nel parsing dei dati scoreboard da Redis: {e}")
     except Exception as e:
-        logging.error(f"Errore generico nel recupero scoreboard: {e}")
+        logging.error(f"Errore generico nel recupero scoreboard da Redis: {e}")
     
     return team_order
 
