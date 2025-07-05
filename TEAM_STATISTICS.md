@@ -18,6 +18,7 @@ Il sistema ora include un avanzato sistema di notifiche che avvisa automaticamen
 - **⚙️ Impostazioni Personalizzabili**: Controllo completo su tipologie di notifiche
 - **📋 Storico**: Mantiene uno storico delle notifiche recenti
 
+
 ### Tipi di Notifiche
 
 1. **Popup Dialog**: 
